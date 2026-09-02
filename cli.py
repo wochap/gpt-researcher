@@ -23,6 +23,7 @@ from backend.utils import write_md_to_pdf, write_md_to_word
 from gpt_researcher import GPTResearcher
 from gpt_researcher.utils.enum import ReportSource, ReportType, Tone
 from gpt_researcher.utils.llm import create_chat_completion
+from gpt_researcher.utils.report_continuation import IncompleteReportError
 
 # =============================================================================
 # CLI
@@ -258,6 +259,16 @@ def _resolve_unique_path(output_dir: Path, stem: str, ext: str = ".md") -> Path:
         i += 1
 
 
+async def _save_partial_report(exc: IncompleteReportError) -> None:
+    """Persist an incomplete report as Markdown only; never publish PDF/DOCX."""
+    output_dir = Path("outputs")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    partial_path = _resolve_unique_path(output_dir, "incomplete_report", ".md")
+    partial_path.write_text(exc.partial_markdown, encoding="utf-8")
+    print(f"Error: {exc}")
+    print(f"Partial report saved to '{partial_path}' (PDF/DOCX generation skipped).")
+
+
 # =============================================================================
 # Main
 # =============================================================================
@@ -279,7 +290,11 @@ async def main(args):
             report_source="web_search",
         )
 
-        report = await detailed_report.run()
+        try:
+            report = await detailed_report.run()
+        except IncompleteReportError as exc:
+            await _save_partial_report(exc)
+            return
         # DetailedReport owns an internal GPTResearcher; reuse it so we can
         # surface sources_count / total_cost and reuse the fast LLM for the title.
         researcher = getattr(detailed_report, "gpt_researcher", None)
@@ -314,7 +329,11 @@ async def main(args):
 
         await researcher.conduct_research()
 
-        report = await researcher.write_report()
+        try:
+            report = await researcher.write_report()
+        except IncompleteReportError as exc:
+            await _save_partial_report(exc)
+            return
 
     # ------------------------------------------------------------------
     # Write the report: LLM-generated title -> safe filename stem,

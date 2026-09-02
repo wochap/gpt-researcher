@@ -152,7 +152,12 @@ async def complete_report_with_continuations(
     tail_chars: int = 65_536,
     websocket: Any | None = None,
 ) -> str:
-    """Complete a report, continuing only when completion is not established."""
+    """Complete a report; only the explicit completion marker proves it finished.
+
+    A ``stop`` finish reason without the marker is treated as truncation and
+    retried within ``max_continuations``; if the marker never appears the
+    accumulated text is surfaced via ``IncompleteReportError``.
+    """
     if not 0 <= max_continuations <= 10:
         raise ValueError("max_continuations must be between 0 and 10")
     if tail_chars <= 0:
@@ -202,12 +207,11 @@ async def complete_report_with_continuations(
         aggregate = "".join(fragments)
         finish_reason = normalize_finish_reason(result.finish_reason)
 
-        # Known provider metadata is authoritative. The marker is a fallback
-        # only for providers that omit or expose an unfamiliar finish reason.
-        complete_naturally = finish_reason == "stop"
-        truncated = finish_reason == "length"
-        metadata_unknown = finish_reason not in {"stop", "length"}
-        if complete_naturally or (metadata_unknown and has_completion_marker(aggregate)):
+        # The marker is the only proof of completion. Providers such as
+        # OmniRoute/Qwen have returned finish_reason "stop" for streams that
+        # actually ended mid-output, so a "stop" without the marker must be
+        # treated as truncation and continued within the bounded budget.
+        if has_completion_marker(aggregate):
             cleaned = remove_completion_marker(aggregate)
             if websocket is not None:
                 try:
@@ -234,7 +238,4 @@ async def complete_report_with_continuations(
                 continuations=continuations,
             )
 
-        # Explicit truncation and missing/unknown metadata both need another
-        # bounded attempt. Unknown metadata may complete via the marker.
-        if truncated or metadata_unknown:
-            continuations += 1
+        continuations += 1

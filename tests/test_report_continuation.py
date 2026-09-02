@@ -79,7 +79,7 @@ async def test_truncation_concatenates_once_and_bounds_each_generated_tail():
         [
             CompletionResult("AAAAAA", "max_tokens"),
             CompletionResult("BBBBBB", "length"),
-            CompletionResult("CCCC", "stop"),
+            CompletionResult(f"CCCC{REPORT_COMPLETION_MARKER}", "stop"),
         ]
     )
 
@@ -126,6 +126,28 @@ async def test_exhaustion_preserves_partial_markdown():
     assert caught.value.partial_markdown == "fragmentfragment"
     assert caught.value.continuations == 1
     assert caught.value.finish_reason == "length"
+
+
+@pytest.mark.asyncio
+async def test_stop_without_marker_continues_until_budget_then_fails():
+    calls = 0
+
+    async def complete(messages):
+        nonlocal calls
+        calls += 1
+        return CompletionResult("fragment", "stop")
+
+    with pytest.raises(IncompleteReportError) as caught:
+        await complete_report_with_continuations(
+            messages=[{"role": "user", "content": "write"}],
+            complete=complete,
+            max_continuations=2,
+        )
+
+    assert calls == 3
+    assert caught.value.partial_markdown == "fragmentfragmentfragment"
+    assert caught.value.continuations == 2
+    assert caught.value.finish_reason == "stop"
 
 
 @pytest.mark.asyncio
