@@ -894,6 +894,19 @@ const GPTResearcher = (() => {
           // For all other report types, append HTML of current chunk to the container.
           writeReport({ output: data.output, type: 'report' }, converter, false, true); // append = true
         }
+      } else if (data.type === 'report_complete') {
+        const replaceChars = Number.isInteger(data.replace_chars) ? data.replace_chars : reportContent.length;
+        reportContent = reportContent.slice(0, Math.max(0, reportContent.length - replaceChars)) + data.output;
+        allReports = allReports.slice(0, Math.max(0, allReports.length - replaceChars)) + data.output;
+        const report_type = document.querySelector('select[name="report_type"]').value;
+        const completeOutput = report_type === 'detailed_report' ? allReports : reportContent;
+        writeReport({ output: completeOutput, type: 'report' }, converter, true, false);
+      } else if (data.type === 'incomplete_report') {
+        updateState('error');
+        isResearchActive = false;
+        updateWebSocketStatus();
+        addAgentResponse({ output: data.output || 'Report generation stopped before completion.' });
+        showToast(data.output || 'Report generation stopped before completion.');
       } else if (data.type === 'path') {
         updateState('finished')
         downloadLinkData = updateDownloadLink(data)

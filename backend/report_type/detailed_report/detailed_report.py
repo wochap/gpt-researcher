@@ -5,6 +5,7 @@ from typing import List, Dict, Set, Optional, Any
 from fastapi import WebSocket
 
 from gpt_researcher import GPTResearcher
+from gpt_researcher.utils.report_continuation import IncompleteReportError
 
 
 class DetailedReport:
@@ -85,7 +86,16 @@ class DetailedReport:
         await self._initial_research()
         subtopics = await self._get_all_subtopics()
         report_introduction = await self.gpt_researcher.write_introduction()
-        _, report_body = await self._generate_subtopic_reports(subtopics)
+        try:
+            _, report_body = await self._generate_subtopic_reports(subtopics)
+        except IncompleteReportError as exc:
+            partial = f"{report_introduction}\n\n{exc.partial_markdown}"
+            raise IncompleteReportError(
+                partial,
+                finish_reason=exc.finish_reason,
+                continuations=exc.continuations,
+                cause=exc,
+            ) from exc
         self.gpt_researcher.visited_urls.update(self.global_urls)
         report = await self._construct_detailed_report(report_introduction, report_body)
         return report
@@ -112,7 +122,17 @@ class DetailedReport:
         subtopics_report_body = ""
 
         for subtopic in subtopics:
-            result = await self._get_subtopic_report(subtopic)
+            try:
+                result = await self._get_subtopic_report(subtopic)
+            except IncompleteReportError as exc:
+                completed = subtopics_report_body.lstrip("\n")
+                partial = f"{completed}\n\n{exc.partial_markdown}" if completed else exc.partial_markdown
+                raise IncompleteReportError(
+                    partial,
+                    finish_reason=exc.finish_reason,
+                    continuations=exc.continuations,
+                    cause=exc,
+                ) from exc
             if result["report"]:
                 subtopic_reports.append(result)
                 subtopics_report_body += f"\n\n\n{result['report']}"

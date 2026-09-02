@@ -22,6 +22,7 @@ from gpt_researcher.llm_provider.generic.base import (
 from ..prompts import PromptFamily
 from .costs import calculate_llm_cost
 from .validators import Subtopics
+from .report_continuation import CompletionResult, PartialCompletionError, extract_finish_reason
 
 
 def get_llm(llm_provider: str, **kwargs):
@@ -49,8 +50,9 @@ async def create_chat_completion(
         llm_kwargs: dict[str, Any] | None = None,
         cost_callback: callable = None,
         reasoning_effort: str | None = ReasoningEfforts.Medium.value,
+        return_metadata: bool = False,
         **kwargs
-) -> str:
+) -> str | CompletionResult:
     """Create a chat completion using the OpenAI API
     Args:
         messages (list[dict[str, str]]): The messages to send to the chat completion.
@@ -120,6 +122,10 @@ async def create_chat_completion(
             response = await provider.get_chat_response(
                 messages, stream, websocket, **kwargs
             )
+        except PartialCompletionError:
+            # A streamed response must never be retried from scratch: callers
+            # need the already-received text to recover it without duplication.
+            raise
         except Exception as exc:
             last_exception = exc
             logging.getLogger(__name__).warning(
@@ -152,6 +158,12 @@ async def create_chat_completion(
             )
             cost_callback(llm_costs)
 
+        if return_metadata:
+            return CompletionResult(
+                content=response,
+                finish_reason=extract_finish_reason(provider.last_response_metadata),
+                response_metadata=provider.last_response_metadata,
+            )
         return response
 
     logging.error(f"Failed to get response from {llm_provider} API")

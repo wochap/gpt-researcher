@@ -22,6 +22,9 @@ from datetime import datetime
 from fastapi import HTTPException
 import logging
 import hashlib
+import urllib.parse
+
+from gpt_researcher.utils.report_continuation import IncompleteReportError
 
 from .multi_agent_runner import run_multi_agent_task
 
@@ -103,7 +106,17 @@ class Researcher:
     async def research(self) -> dict:
         """Conduct research and return paths to generated files"""
         await self.researcher.conduct_research()
-        report = await self.researcher.write_report()
+        try:
+            report = await self.researcher.write_report()
+        except IncompleteReportError as exc:
+            partial_path = await save_partial_report(
+                exc.partial_markdown, self.research_id
+            )
+            return {
+                "status": "incomplete",
+                "message": str(exc),
+                "partial_path": partial_path,
+            }
         
         # Generate the files
         sanitized_filename = sanitize_filename(f"task_{int(time.time())}_{self.query}")
@@ -163,21 +176,38 @@ async def handle_start_command(websocket, data: str, manager):
 
     sanitized_filename = sanitize_filename(f"task_{int(time.time())}_{task}")
 
-    report = await manager.start_streaming(
-        task,
-        report_type,
-        report_source,
-        source_urls,
-        document_urls,
-        tone,
-        websocket,
-        headers,
-        query_domains,
-        mcp_enabled,
-        mcp_strategy,
-        mcp_configs,
-        max_search_results,
-    )
+    try:
+        report = await manager.start_streaming(
+            task,
+            report_type,
+            report_source,
+            source_urls,
+            document_urls,
+            tone,
+            websocket,
+            headers,
+            query_domains,
+            mcp_enabled,
+            mcp_strategy,
+            mcp_configs,
+            max_search_results,
+        )
+    except IncompleteReportError as exc:
+        partial_path = await save_partial_report(
+            exc.partial_markdown, sanitized_filename
+        )
+        await websocket.send_json(
+            {
+                "type": "incomplete_report",
+                "content": "incomplete_report",
+                "output": (
+                    f"{exc} Partial Markdown was saved for recovery at "
+                    f"{partial_path}."
+                ),
+                "partial_path": partial_path,
+            }
+        )
+        return
     report = str(report)
     file_paths = await generate_report_files(report, sanitized_filename)
     # Add JSON log path to file_paths
@@ -265,6 +295,15 @@ async def generate_report_files(report: str, filename: str) -> Dict[str, str]:
     docx_path = await write_md_to_word(report, filename)
     md_path = await write_text_to_md(report, filename)
     return {"pdf": pdf_path, "docx": docx_path, "md": md_path}
+
+
+async def save_partial_report(partial_markdown: str, filename: str) -> str:
+    """Persist recovery Markdown without creating successful report artifacts."""
+    safe_name = (filename or "incomplete-report").replace("/", "-").replace("\\", "-")
+    os.makedirs("outputs", exist_ok=True)
+    path = Path("outputs") / f"{safe_name}.partial.md"
+    path.write_text(partial_markdown, encoding="utf-8")
+    return urllib.parse.quote(str(path))
 
 
 async def send_file_paths(websocket, file_paths: Dict[str, str]):

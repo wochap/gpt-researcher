@@ -2,6 +2,7 @@ import asyncio
 from typing import List, Dict, Any
 from ..config.config import Config
 from ..utils.llm import create_chat_completion
+from ..utils.report_continuation import CompletionResult, complete_report_with_continuations
 from ..utils.logger import get_formatted_logger
 from ..prompts import PromptFamily, get_prompt_by_report_type
 from ..utils.enum import Tone
@@ -288,13 +289,15 @@ You have the following pre-generated images available. Embed them in relevant se
 {images_info}
 
 Place each image on its own line after the relevant section header or paragraph. Use all available images where they add value to the content."""
-    try:
-        report = await create_chat_completion(
+    messages = [
+        {"role": "system", "content": f"{agent_role_prompt}"},
+        {"role": "user", "content": content},
+    ]
+
+    async def complete(completion_messages):
+        result = await create_chat_completion(
             model=cfg.smart_llm_model,
-            messages=[
-                {"role": "system", "content": f"{agent_role_prompt}"},
-                {"role": "user", "content": content},
-            ],
+            messages=completion_messages,
             temperature=0.35,
             llm_provider=cfg.smart_llm_provider,
             stream=True,
@@ -302,25 +305,19 @@ Place each image on its own line after the relevant section header or paragraph.
             max_tokens=cfg.smart_token_limit,
             llm_kwargs=cfg.llm_kwargs,
             cost_callback=cost_callback,
+            return_metadata=True,
             **kwargs
         )
-    except Exception:
-        try:
-            report = await create_chat_completion(
-                model=cfg.smart_llm_model,
-                messages=[
-                    {"role": "user", "content": f"{agent_role_prompt}\n\n{content}"},
-                ],
-                temperature=0.35,
-                llm_provider=cfg.smart_llm_provider,
-                stream=True,
-                websocket=websocket,
-                max_tokens=cfg.smart_token_limit,
-                llm_kwargs=cfg.llm_kwargs,
-                cost_callback=cost_callback,
-                **kwargs
-            )
-        except Exception as e:
-            print(f"Error in generate_report: {e}")
+        # Preserve compatibility with custom integrations and tests that wrap
+        # the utility and still return its historical string shape.
+        if isinstance(result, str):
+            return CompletionResult(result, "stop")
+        return result
 
-    return report
+    return await complete_report_with_continuations(
+        messages=messages,
+        complete=complete,
+        max_continuations=getattr(cfg, "report_max_continuations", 2),
+        tail_chars=getattr(cfg, "report_continuation_tail_chars", 65_536),
+        websocket=websocket,
+    )

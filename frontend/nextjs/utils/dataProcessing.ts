@@ -27,9 +27,27 @@ export const preprocessOrderedData = (data: Data[]) => {
     } else if (type === 'report_complete') {
       // Replace entire report content with the complete version (includes images)
       if (currentReportGroup) {
-        currentReportGroup.content = output;
+        const replaceChars = Number.isInteger(item.replace_chars)
+          ? item.replace_chars
+          : currentReportGroup.content.length;
+        currentReportGroup.content =
+          currentReportGroup.content.slice(
+            0,
+            Math.max(0, currentReportGroup.content.length - replaceChars)
+          ) + output;
       } else {
         currentReportGroup = { type: 'reportBlock', content: output };
+        groupedData.push(currentReportGroup);
+      }
+    } else if (type === 'incomplete_report') {
+      const reportGroup = currentReportGroup || [...groupedData]
+        .reverse()
+        .find(group => group.type === 'reportBlock');
+      const warning = `\n\n> **Incomplete report:** ${output}`;
+      if (reportGroup) {
+        reportGroup.content += warning;
+      } else {
+        currentReportGroup = { type: 'reportBlock', content: warning };
         groupedData.push(currentReportGroup);
       }
     } else if (content === 'selected_images') {
@@ -126,4 +144,4 @@ export const preprocessOrderedData = (data: Data[]) => {
 
   groupedData = consolidateSourceAndImageBlocks(groupedData);
   return groupedData;
-}; 
+};

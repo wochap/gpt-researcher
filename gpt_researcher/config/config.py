@@ -44,6 +44,7 @@ class Config:
 
         config_to_use = self.load_config(config_path)
         self._set_attributes(config_to_use)
+        self._validate_report_continuation_config()
         self._set_embedding_attributes()
         self._set_llm_attributes()
         self._handle_deprecated_attributes()
@@ -59,6 +60,12 @@ class Config:
             self.mcp_servers = self.mcp_servers
         if hasattr(self, 'mcp_allowed_root_paths'):
             self.mcp_allowed_root_paths = self.mcp_allowed_root_paths
+
+    def _validate_report_continuation_config(self) -> None:
+        if not 0 <= self.report_max_continuations <= 10:
+            raise ValueError("REPORT_MAX_CONTINUATIONS must be between 0 and 10")
+        if self.report_continuation_tail_chars <= 0:
+            raise ValueError("REPORT_CONTINUATION_TAIL_CHARS must be positive")
 
     def _set_attributes(self, config: Dict[str, Any]) -> None:
         """Set configuration attributes from config dictionary.

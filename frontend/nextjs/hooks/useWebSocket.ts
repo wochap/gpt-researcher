@@ -110,6 +110,7 @@ export const useWebSocket = (
           
           if (data.type === 'error') {
             console.error(`Server error: ${data.output}`);
+            setLoading(false);
           } else if (data.type === 'human_feedback' && data.content === 'request') {
             setQuestionForHuman(data.output);
             setShowHumanFeedback(true);
@@ -122,7 +123,16 @@ export const useWebSocket = (
             } else if (data.type === 'report_complete') {
               // Replace entire report with the complete version (includes images)
               console.log('Received complete report with images');
-              setAnswer(data.output);
+              setAnswer((prev: string) => {
+                const replaceChars = Number.isInteger(data.replace_chars)
+                  ? data.replace_chars
+                  : prev.length;
+                return prev.slice(0, Math.max(0, prev.length - replaceChars)) + data.output;
+              });
+            } else if (data.type === 'incomplete_report') {
+              // Keep the streamed answer visible and expose the recovery path.
+              console.error(data.output);
+              setLoading(false);
             } else if (data.type === 'path') {
               setLoading(false);
             }

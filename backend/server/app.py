@@ -25,13 +25,14 @@ from server.websocket_manager import WebSocketManager
 from server.server_utils import (
     get_config_dict, sanitize_filename,
     update_environment_variables, handle_file_upload, handle_file_deletion,
-    execute_multi_agents, handle_websocket_communication
+    execute_multi_agents, handle_websocket_communication, save_partial_report,
 )
 from server.agent_discovery import build_agent_discovery_document
 
 from server.websocket_manager import run_agent
 from utils import write_md_to_word, write_md_to_pdf
 from gpt_researcher.utils.enum import Tone
+from gpt_researcher.utils.report_continuation import IncompleteReportError
 from chat.chat import ChatAgentWithMemory
 
 from server.report_store import ReportStore
@@ -331,20 +332,29 @@ async def research_report_chat(research_id: str, request: Request):
 
 
 async def write_report(research_request: ResearchRequest, research_id: str = None):
-    report_information = await run_agent(
-        task=research_request.task,
-        report_type=research_request.report_type,
-        report_source=research_request.report_source,
-        source_urls=[],
-        document_urls=[],
-        tone=Tone[research_request.tone],
-        websocket=None,
-        stream_output=None,
-        headers=research_request.headers,
-        query_domains=[],
-        config_path="",
-        return_researcher=True
-    )
+    try:
+        report_information = await run_agent(
+            task=research_request.task,
+            report_type=research_request.report_type,
+            report_source=research_request.report_source,
+            source_urls=[],
+            document_urls=[],
+            tone=Tone[research_request.tone],
+            websocket=None,
+            stream_output=None,
+            headers=research_request.headers,
+            query_domains=[],
+            config_path="",
+            return_researcher=True
+        )
+    except IncompleteReportError as exc:
+        partial_path = await save_partial_report(exc.partial_markdown, research_id)
+        return {
+            "research_id": research_id,
+            "status": "incomplete",
+            "message": str(exc),
+            "partial_path": partial_path,
+        }
 
     docx_path = await write_md_to_word(report_information[0], research_id)
     pdf_path = await write_md_to_pdf(report_information[0], research_id)
@@ -462,4 +472,3 @@ async def chat(chat_request: ChatRequest):
     except Exception as e:
         logger.error(f"Error processing chat request: {str(e)}", exc_info=True)
         return {"error": str(e)}
-

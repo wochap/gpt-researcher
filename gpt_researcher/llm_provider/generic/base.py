@@ -9,6 +9,7 @@ from typing import Any
 from colorama import Fore, Style, init
 import os
 from enum import Enum
+from gpt_researcher.utils.report_continuation import PartialCompletionError
 
 _SUPPORTED_PROVIDERS = {
     "openai",
@@ -381,16 +382,21 @@ class GenericLLMProvider:
         response = ""
 
         # Streaming the response using the chain astream method from langchain
-        async for chunk in self.llm.astream(messages, **kwargs):
-            self._capture_response_metadata(chunk)
-            content = chunk.content
-            if not content:
-                continue
-            response += content
-            paragraph += content
-            if "\n" in paragraph:
-                await self._send_output(paragraph, websocket)
-                paragraph = ""
+        try:
+            async for chunk in self.llm.astream(messages, **kwargs):
+                self._capture_response_metadata(chunk)
+                content = chunk.content
+                if not content:
+                    continue
+                response += content
+                paragraph += content
+                if "\n" in paragraph:
+                    await self._send_output(paragraph, websocket)
+                    paragraph = ""
+        except Exception as exc:
+            raise PartialCompletionError(
+                str(exc), response, self.last_response_metadata
+            ) from exc
 
         if paragraph:
             await self._send_output(paragraph, websocket)

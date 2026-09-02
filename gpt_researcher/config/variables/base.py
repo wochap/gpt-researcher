@@ -20,6 +20,8 @@ class BaseConfig(TypedDict):
     MEMORY_BACKEND: str
     TOTAL_WORDS: int
     REPORT_FORMAT: str
+    REPORT_MAX_CONTINUATIONS: int
+    REPORT_CONTINUATION_TAIL_CHARS: int
     CURATE_SOURCES: bool
     MAX_ITERATIONS: int
     LANGUAGE: str
