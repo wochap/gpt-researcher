@@ -110,27 +110,22 @@ def has_completion_marker(text: str) -> bool:
     return REPORT_COMPLETION_MARKER in text
 
 
-def bounded_tail(text: str, tail_chars: int) -> str:
-    if tail_chars <= 0:
-        raise ValueError("tail_chars must be positive")
-    return text[-tail_chars:]
-
-
 def build_continuation_messages(
     original_messages: Sequence[Mapping[str, str]],
     generated_text: str,
-    tail_chars: int,
 ) -> list[dict[str, str]]:
-    """Keep the original request and only the newest generated-text tail."""
+    """Keep the original request and the complete response generated so far."""
     messages = [dict(message) for message in original_messages]
     messages.extend(
         [
-            {"role": "assistant", "content": bounded_tail(generated_text, tail_chars)},
+            {"role": "assistant", "content": generated_text},
             {
                 "role": "user",
                 "content": (
-                    "Continue the report exactly where the assistant text ends. "
-                    "Do not repeat earlier text. When the report is fully complete, "
+                    "Your previous response was cut off. Continue the report exactly "
+                    "where it ended, without repeating any earlier text. Preserve the "
+                    "report's existing structure and coherence. Only when the report "
+                    "is fully complete, "
                     f"append {REPORT_COMPLETION_MARKER} on its own line."
                 ),
             },
@@ -149,7 +144,6 @@ async def complete_report_with_continuations(
     messages: Sequence[Mapping[str, str]],
     complete: CompletionCallable,
     max_continuations: int = 2,
-    tail_chars: int = 65_536,
     websocket: Any | None = None,
 ) -> str:
     """Complete a report; only the explicit completion marker proves it finished.
@@ -160,8 +154,6 @@ async def complete_report_with_continuations(
     """
     if not 0 <= max_continuations <= 10:
         raise ValueError("max_continuations must be between 0 and 10")
-    if tail_chars <= 0:
-        raise ValueError("tail_chars must be positive")
 
     original_messages = [dict(message) for message in messages]
     original_messages.append(
@@ -181,9 +173,7 @@ async def complete_report_with_continuations(
         request_messages = (
             original_messages
             if not fragments
-            else build_continuation_messages(
-                original_messages, "".join(fragments), tail_chars
-            )
+            else build_continuation_messages(original_messages, "".join(fragments))
         )
         try:
             result = await complete(request_messages)

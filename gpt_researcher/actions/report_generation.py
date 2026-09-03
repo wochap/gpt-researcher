@@ -318,6 +318,5 @@ Place each image on its own line after the relevant section header or paragraph.
         messages=messages,
         complete=complete,
         max_continuations=getattr(cfg, "report_max_continuations", 2),
-        tail_chars=getattr(cfg, "report_continuation_tail_chars", 65_536),
         websocket=websocket,
     )

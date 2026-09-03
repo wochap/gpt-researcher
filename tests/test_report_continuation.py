@@ -7,7 +7,6 @@ from gpt_researcher.utils.report_continuation import (
     IncompleteReportError,
     PartialCompletionError,
     REPORT_COMPLETION_MARKER,
-    bounded_tail,
     complete_report_with_continuations,
     has_completion_marker,
     normalize_finish_reason,
@@ -40,13 +39,10 @@ def test_normalize_finish_reason(raw, expected):
     assert normalize_finish_reason(raw) == expected
 
 
-def test_marker_and_tail_helpers():
+def test_marker_helpers():
     marked = f"report\n{REPORT_COMPLETION_MARKER}\n"
     assert has_completion_marker(marked)
     assert REPORT_COMPLETION_MARKER not in remove_completion_marker(marked)
-    assert bounded_tail("abcdefgh", 4) == "efgh"
-    with pytest.raises(ValueError):
-        bounded_tail("text", 0)
 
 
 @pytest.mark.asyncio
@@ -73,7 +69,7 @@ async def test_natural_completion_emits_clean_aggregate():
 
 
 @pytest.mark.asyncio
-async def test_truncation_concatenates_once_and_bounds_each_generated_tail():
+async def test_truncation_concatenates_once_and_sends_full_aggregate():
     requests = []
     results = iter(
         [
@@ -91,14 +87,21 @@ async def test_truncation_concatenates_once_and_bounds_each_generated_tail():
         messages=[{"role": "user", "content": "ORIGINAL"}],
         complete=complete,
         max_continuations=2,
-        tail_chars=4,
     )
 
     assert report == "AAAAAABBBBBBCCCC"
-    assert requests[1][-2] == {"role": "assistant", "content": "AAAA"}
-    assert requests[2][-2] == {"role": "assistant", "content": "BBBB"}
+    assert requests[1][-2] == {"role": "assistant", "content": "AAAAAA"}
+    assert requests[2][-2] == {
+        "role": "assistant",
+        "content": "AAAAAABBBBBB",
+    }
     assert all("ORIGINAL" in str(request) for request in requests)
-    assert "AAAA" not in requests[2][-2]["content"]
+    continuation_prompt = requests[1][-1]["content"]
+    assert "previous response was cut off" in continuation_prompt
+    assert "exactly where it ended" in continuation_prompt
+    assert "without repeating" in continuation_prompt
+    assert "structure and coherence" in continuation_prompt
+    assert REPORT_COMPLETION_MARKER in continuation_prompt
 
 
 @pytest.mark.asyncio

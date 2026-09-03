@@ -64,8 +64,6 @@ class Config:
     def _validate_report_continuation_config(self) -> None:
         if not 0 <= self.report_max_continuations <= 10:
             raise ValueError("REPORT_MAX_CONTINUATIONS must be between 0 and 10")
-        if self.report_continuation_tail_chars <= 0:
-            raise ValueError("REPORT_CONTINUATION_TAIL_CHARS must be positive")
 
     def _set_attributes(self, config: Dict[str, Any]) -> None:
         """Set configuration attributes from config dictionary.
