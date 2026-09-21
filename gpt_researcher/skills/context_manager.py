@@ -13,6 +13,7 @@ from ..context.compression import (
     VectorstoreCompressor,
     WrittenContentCompressor,
 )
+from ..context.rerank_compression import get_reranked_context, retrieval_pipeline_enabled
 
 
 class ContextManager:
@@ -44,6 +45,8 @@ class ContextManager:
         Returns:
             Compressed context string of relevant content.
         """
+        if retrieval_pipeline_enabled(self.researcher.cfg):
+            return await get_reranked_context(self.researcher, query, pages)
         if self.researcher.verbose:
             await stream_output(
                 "logs",

@@ -50,3 +50,19 @@ class BaseConfig(TypedDict):
     IMAGE_GENERATION_ENABLED: bool
     IMAGE_GENERATION_STYLE: str  # Image style: "dark", "light", or "auto"
     IMAGE_GENERATION_PROVIDER: str  # Image provider: "google" or "modelslab"
+    # Local GPU retrieval pipeline (Ollama embeddings -> llama-server reranker)
+    RETRIEVAL_PIPELINE: str  # "default" or "local_gpu"
+    COMPRESSION_CHUNK_SIZE: int
+    COMPRESSION_CHUNK_OVERLAP: int
+    EMBEDDING_TOP_K: int
+    EMBEDDING_BATCH_SIZE: int
+    RERANKER_ENABLED: bool
+    RERANKER_PROVIDER: str
+    RERANKER_BASE_URL: str
+    RERANKER_ENDPOINT: str
+    RERANKER_MODEL: str
+    RERANKER_TOP_K: int
+    RERANKER_BATCH_SIZE: int
+    RERANKER_TIMEOUT: float
+    RERANKER_INSTRUCTION: str
+    RERANKER_APPLY_QWEN3_TEMPLATE: bool

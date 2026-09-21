@@ -56,4 +56,27 @@ DEFAULT_CONFIG: BaseConfig = {
     "IMAGE_GENERATION_ENABLED": False,  # Master switch for inline image generation
     "IMAGE_GENERATION_STYLE": "dark",  # Image style: "dark" (matches app theme), "light", or "auto"
     "IMAGE_GENERATION_PROVIDER": "google",  # Image provider: "google" or "modelslab"
+
+    # Local GPU retrieval pipeline (Ollama embeddings -> llama-server reranker).
+    # "default" keeps the upstream ContextCompressor; "local_gpu" enables
+    # configurable chunking, cosine top-K and reranking. Both models are
+    # expected to stay resident on the GPU at the same time.
+    "RETRIEVAL_PIPELINE": "default",
+    "COMPRESSION_CHUNK_SIZE": 2000,  # RecursiveCharacterTextSplitter chunk size (local_gpu only)
+    "COMPRESSION_CHUNK_OVERLAP": 200,  # RecursiveCharacterTextSplitter chunk overlap (local_gpu only)
+    "EMBEDDING_TOP_K": 30,  # Chunks kept by cosine similarity before reranking
+    "EMBEDDING_BATCH_SIZE": 16,  # Texts per embedding request (0 = single request)
+    "RERANKER_ENABLED": False,  # Master switch for the rerank stage
+    "RERANKER_PROVIDER": "llamacpp",  # Only "llamacpp" (llama-server --rerank) is supported
+    "RERANKER_BASE_URL": "http://localhost:8001",
+    "RERANKER_ENDPOINT": "/v1/rerank",  # Rerank path; llama.cpp builds also expose /rerank, /v1/reranking
+    "RERANKER_MODEL": "Qwen/Qwen3-Reranker-4B",
+    "RERANKER_TOP_K": 8,  # Chunks handed to the LLM after reranking
+    "RERANKER_BATCH_SIZE": 8,  # Documents per rerank request
+    "RERANKER_TIMEOUT": 30.0,  # Seconds per rerank request (no server cold start to cover)
+    "RERANKER_INSTRUCTION": "Given a web search query, retrieve relevant passages that answer the query",
+    # Client-side Qwen3-Reranker chat template. Off: llama-server applies the
+    # GGUF's tokenizer.chat_template.rerank itself, so wrapping again would
+    # nest the template twice. Turn on only for GGUFs without that template.
+    "RERANKER_APPLY_QWEN3_TEMPLATE": False,
 }
