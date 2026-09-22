@@ -14,8 +14,12 @@ default; the switch is kept for GGUFs that lack that template.
 
 from __future__ import annotations
 
+import asyncio
+import email.utils
 import logging
 import os
+import random
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
@@ -43,6 +47,18 @@ QWEN3_DOCUMENT_SUFFIX = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\
 DEFAULT_INSTRUCTION = "Given a web search query, retrieve relevant passages that answer the query"
 DEFAULT_ENDPOINT = "/v1/rerank"
 
+# Transient failures worth retrying. llama-server behind a lazy socket proxy
+# answers 503 while the model loads, and the proxy itself can drop or refuse
+# the first connections. Other 4xx/5xx (e.g. 500 "input is too large to
+# process") are deterministic and fail straight to the fallback.
+RETRY_STATUS_CODES = frozenset({502, 503, 504})
+RETRY_EXCEPTIONS = (httpx.ConnectError, httpx.RemoteProtocolError, httpx.ReadTimeout)
+RETRY_BASE_DELAY = 1.0
+RETRY_MAX_DELAY = 30.0
+
+# Indirection so tests can skip the backoff without patching asyncio globally.
+_sleep = asyncio.sleep
+
 
 class LlamaCppReranker:
     """Rerank documents with a llama-server rerank endpoint in conservative batches."""
@@ -58,6 +74,8 @@ class LlamaCppReranker:
         api_key: str | None = None,
         endpoint: str = DEFAULT_ENDPOINT,
         transport: httpx.AsyncBaseTransport | None = None,
+        max_retries: int = 4,
+        retry_max_wait: float = 60.0,
     ):
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -68,6 +86,8 @@ class LlamaCppReranker:
         self.api_key = api_key
         self.endpoint = "/" + (endpoint or DEFAULT_ENDPOINT).strip("/")
         self._transport = transport
+        self.max_retries = max(0, int(max_retries))
+        self.retry_max_wait = max(0.0, float(retry_max_wait))
 
     def format_query(self, query: str) -> str:
         if not self.apply_qwen3_template:
@@ -88,6 +108,58 @@ class LlamaCppReranker:
             transport=self._transport,
         )
 
+    @staticmethod
+    def _retry_after(response: httpx.Response) -> Optional[float]:
+        """Seconds from a ``Retry-After`` header (delta-seconds or HTTP-date), if any."""
+        value = response.headers.get("Retry-After")
+        if not value:
+            return None
+        try:
+            return max(0.0, float(value))
+        except ValueError:
+            pass
+        try:
+            when = email.utils.parsedate_to_datetime(value)
+        except (TypeError, ValueError):
+            return None
+        return max(0.0, when.timestamp() - time.time())
+
+    def _backoff(self, attempt: int) -> float:
+        # Exponential backoff with equal jitter: half fixed, half random.
+        delay = min(RETRY_MAX_DELAY, RETRY_BASE_DELAY * (2 ** attempt))
+        return delay / 2 + random.uniform(0, delay / 2)
+
+    async def _post_with_retry(self, client: httpx.AsyncClient, payload: Dict[str, Any]) -> httpx.Response:
+        """POST ``payload``, retrying transient failures within ``max_retries`` and ``retry_max_wait``.
+
+        Returns the last response (the caller raises on its status) or
+        re-raises the last transient exception once retries run out.
+        """
+        deadline = time.monotonic() + self.retry_max_wait
+        attempt = 0
+        while True:
+            try:
+                response = await client.post(self.endpoint, json=payload)
+            except RETRY_EXCEPTIONS as exc:
+                reason = f"{type(exc).__name__}: {exc}"
+                delay = self._backoff(attempt)
+                if attempt >= self.max_retries or time.monotonic() + delay > deadline:
+                    raise
+            else:
+                if response.status_code not in RETRY_STATUS_CODES:
+                    return response
+                reason = f"HTTP {response.status_code}"
+                retry_after = self._retry_after(response)
+                delay = retry_after if retry_after is not None else self._backoff(attempt)
+                if attempt >= self.max_retries or time.monotonic() + delay > deadline:
+                    return response
+            attempt += 1
+            logger.info(
+                "Reranker request failed (%s); retry %d/%d in %.1fs",
+                reason, attempt, self.max_retries, delay,
+            )
+            await _sleep(delay)
+
     async def _rerank_batch(
         self, client: httpx.AsyncClient, query: str, texts: List[str], offset: int
     ) -> List[Tuple[int, float]]:
@@ -100,7 +172,7 @@ class LlamaCppReranker:
             "documents": texts,
             "top_n": len(texts),
         }
-        response = await client.post(self.endpoint, json=payload)
+        response = await self._post_with_retry(client, payload)
         response.raise_for_status()
         results = response.json()["results"]
         return [(offset + int(item["index"]), float(item["relevance_score"])) for item in results]
@@ -122,6 +194,14 @@ class LlamaCppReranker:
                     batch = docs[offset:offset + self.batch_size]
                     texts = [self.format_document(d.page_content) for d in batch]
                     scores.extend(await self._rerank_batch(client, formatted_query, texts, offset))
+        except httpx.HTTPStatusError as exc:
+            # The status line alone hides the cause; llama-server puts the
+            # real error message in the body.
+            logger.warning(
+                "Reranker request failed (HTTP %s: %s); falling back to embedding order",
+                exc.response.status_code, exc.response.text[:300],
+            )
+            return docs[:top_n]
         except (httpx.HTTPError, KeyError, ValueError, TypeError) as exc:
             logger.warning("Reranker request failed (%s); falling back to embedding order", exc)
             return docs[:top_n]
@@ -158,4 +238,6 @@ def build_reranker(cfg: Any) -> Optional[LlamaCppReranker]:
         apply_qwen3_template=getattr(cfg, "reranker_apply_qwen3_template", False),
         api_key=os.environ.get("RERANKER_API_KEY"),
         endpoint=getattr(cfg, "reranker_endpoint", DEFAULT_ENDPOINT),
+        max_retries=getattr(cfg, "reranker_max_retries", 4),
+        retry_max_wait=getattr(cfg, "reranker_retry_max_wait", 60.0),
     )

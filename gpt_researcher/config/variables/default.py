@@ -74,6 +74,8 @@ DEFAULT_CONFIG: BaseConfig = {
     "RERANKER_TOP_K": 8,  # Chunks handed to the LLM after reranking
     "RERANKER_BATCH_SIZE": 8,  # Documents per rerank request
     "RERANKER_TIMEOUT": 30.0,  # Seconds per rerank request (no server cold start to cover)
+    "RERANKER_MAX_RETRIES": 4,  # Retries per batch on 502/503/504, connect errors and read timeouts
+    "RERANKER_RETRY_MAX_WAIT": 60.0,  # Seconds of total retry budget per batch (includes request time)
     "RERANKER_INSTRUCTION": "Given a web search query, retrieve relevant passages that answer the query",
     # Client-side Qwen3-Reranker chat template. Off: llama-server applies the
     # GGUF's tokenizer.chat_template.rerank itself, so wrapping again would

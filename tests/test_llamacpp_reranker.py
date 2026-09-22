@@ -3,13 +3,27 @@
 import json
 
 import httpx
+import pytest
 from langchain_core.documents import Document
 
+from gpt_researcher.context import reranker as reranker_module
 from gpt_researcher.context.reranker import (
     QWEN3_DOCUMENT_SUFFIX,
     QWEN3_QUERY_PREFIX,
     LlamaCppReranker,
 )
+
+
+@pytest.fixture(autouse=True)
+def sleeps(monkeypatch):
+    """Record retry waits instead of sleeping, so retry tests run instantly."""
+    waits = []
+
+    async def fake_sleep(delay):
+        waits.append(delay)
+
+    monkeypatch.setattr(reranker_module, "_sleep", fake_sleep)
+    return waits
 
 
 def make_docs(n):
@@ -128,3 +142,114 @@ async def test_empty_docs():
     reranker = make_reranker(server)
     assert await reranker.arerank("q", [], top_n=8) == []
     assert server.requests == []
+
+
+def scripted_handler(steps):
+    """Replay ``steps`` in order: a status code, a (status, headers) pair or an exception.
+
+    Once the script runs out every request succeeds via RerankServer.
+    """
+    server = RerankServer()
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        if len(calls) <= len(steps):
+            step = steps[len(calls) - 1]
+            if isinstance(step, type) and issubclass(step, Exception):
+                raise step("scripted failure", request=request)
+            status, headers = step if isinstance(step, tuple) else (step, {})
+            return httpx.Response(status, headers=headers, json={"error": {"message": f"status {status}"}})
+        return server.handler(request)
+
+    return handler, calls
+
+
+async def test_retries_503_then_succeeds(sleeps):
+    handler, calls = scripted_handler([503])
+    reranker = LlamaCppReranker(base_url="http://localhost:8001", model="m", transport=httpx.MockTransport(handler))
+    out = await reranker.arerank("q", make_docs(3), top_n=2)
+    assert len(calls) == 2
+    assert len(sleeps) == 1
+    assert [d.page_content for d in out] == ["doc 2", "doc 1"]
+    assert "rerank_score" in out[0].metadata
+
+
+async def test_retry_after_header_is_honored(sleeps):
+    handler, calls = scripted_handler([(503, {"Retry-After": "7"})])
+    reranker = LlamaCppReranker(base_url="http://localhost:8001", model="m", transport=httpx.MockTransport(handler))
+    await reranker.arerank("q", make_docs(2), top_n=2)
+    assert len(calls) == 2
+    assert sleeps == [7.0]
+
+
+async def test_500_is_not_retried_and_body_is_logged(sleeps, caplog):
+    def handler(request):
+        return httpx.Response(
+            500, json={"error": {"message": "input (739 tokens) is too large to process"}}
+        )
+
+    reranker = LlamaCppReranker(base_url="http://localhost:8001", model="m", transport=httpx.MockTransport(handler))
+    docs = make_docs(4)
+    with caplog.at_level("WARNING", logger="gpt_researcher.context.reranker"):
+        out = await reranker.arerank("q", docs, top_n=2)
+    assert out == docs[:2]
+    assert sleeps == []
+    assert "HTTP 500" in caplog.text
+    assert "input (739 tokens) is too large to process" in caplog.text
+
+
+async def test_retries_exhausted_falls_back(sleeps, caplog):
+    handler, calls = scripted_handler([503] * 10)
+    reranker = LlamaCppReranker(
+        base_url="http://localhost:8001", model="m", max_retries=3, transport=httpx.MockTransport(handler)
+    )
+    docs = make_docs(5)
+    with caplog.at_level("WARNING", logger="gpt_researcher.context.reranker"):
+        out = await reranker.arerank("q", docs, top_n=3)
+    assert out == docs[:3]
+    assert len(calls) == 4
+    assert len(sleeps) == 3
+    # Exponential backoff with equal jitter: attempt n waits within [2**n / 2, 2**n].
+    for n, wait in enumerate(sleeps):
+        assert 2 ** n / 2 <= wait <= 2 ** n
+    assert "HTTP 503" in caplog.text
+
+
+async def test_retry_budget_stops_retries(sleeps):
+    handler, calls = scripted_handler([(503, {"Retry-After": "120"})])
+    reranker = LlamaCppReranker(
+        base_url="http://localhost:8001", model="m", retry_max_wait=60, transport=httpx.MockTransport(handler)
+    )
+    docs = make_docs(2)
+    assert await reranker.arerank("q", docs, top_n=2) == docs[:2]
+    assert len(calls) == 1
+    assert sleeps == []
+
+
+async def test_connect_error_then_succeeds(sleeps):
+    handler, calls = scripted_handler([httpx.ConnectError])
+    reranker = LlamaCppReranker(base_url="http://localhost:8001", model="m", transport=httpx.MockTransport(handler))
+    out = await reranker.arerank("q", make_docs(3), top_n=3)
+    assert len(calls) == 2
+    assert len(sleeps) == 1
+    assert [d.page_content for d in out] == ["doc 2", "doc 1", "doc 0"]
+
+
+async def test_transient_failure_in_later_batch_keeps_earlier_scores(sleeps):
+    # Transient failure in the second batch only; the first batch's scores survive.
+    server = RerankServer()
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        if len(calls) == 2:
+            raise httpx.RemoteProtocolError("server disconnected", request=request)
+        return server.handler(request)
+
+    reranker = LlamaCppReranker(
+        base_url="http://localhost:8001", model="m", batch_size=2, transport=httpx.MockTransport(handler)
+    )
+    out = await reranker.arerank("q", make_docs(4), top_n=4)
+    assert len(calls) == 3
+    assert [d.page_content for d in out] == ["doc 3", "doc 2", "doc 1", "doc 0"]

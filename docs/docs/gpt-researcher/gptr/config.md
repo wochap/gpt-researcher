@@ -115,6 +115,8 @@ The hard upper bound is 200k (sanity guard against typos).
 - **`RERANKER_TOP_K`**: Number of reranked chunks handed to the LLM. Defaults to `8`.
 - **`RERANKER_BATCH_SIZE`**: Documents per rerank request. Defaults to `8`.
 - **`RERANKER_TIMEOUT`**: Timeout in seconds for each rerank request. Defaults to `30.0`.
+- **`RERANKER_MAX_RETRIES`**: Retries per rerank batch on transient failures: HTTP 502, 503 or 504, connection errors, dropped connections and read timeouts. Waits use exponential backoff with jitter and honor `Retry-After`. Other errors are not retried. Defaults to `4`.
+- **`RERANKER_RETRY_MAX_WAIT`**: Total time budget in seconds for the retries of one batch, counted from the first request. A retry whose wait would exceed the budget is skipped, and the batch falls back to embedding order. Defaults to `60.0`.
 - **`RERANKER_INSTRUCTION`**: Task instruction embedded in the Qwen3 reranker prompt. Defaults to `Given a web search query, retrieve relevant passages that answer the query`.
 - **`RERANKER_APPLY_QWEN3_TEMPLATE`**: Wrap the query and documents in the Qwen3-Reranker chat template on the client. Leave off for GGUFs that carry `tokenizer.chat_template.rerank`: llama-server applies that template itself and turning this on nests it twice (see [Templating](#templating)). Defaults to `False`.
 

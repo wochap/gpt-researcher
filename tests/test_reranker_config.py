@@ -17,6 +17,7 @@ ENV_KEYS = [
     "EMBEDDING_BATCH_SIZE", "RERANKER_ENABLED", "RERANKER_PROVIDER", "RERANKER_BASE_URL",
     "RERANKER_ENDPOINT", "RERANKER_MODEL", "RERANKER_TOP_K", "RERANKER_BATCH_SIZE",
     "RERANKER_TIMEOUT", "RERANKER_INSTRUCTION", "RERANKER_APPLY_QWEN3_TEMPLATE",
+    "RERANKER_MAX_RETRIES", "RERANKER_RETRY_MAX_WAIT",
 ]
 
 
@@ -49,6 +50,8 @@ def test_defaults():
     assert cfg.reranker_top_k == 8
     assert cfg.reranker_batch_size == 8
     assert cfg.reranker_timeout == 30.0
+    assert cfg.reranker_max_retries == 4
+    assert cfg.reranker_retry_max_wait == 60.0
     assert cfg.reranker_apply_qwen3_template is False
     for removed in ("reranker_vllm_sleep_mode", "gpu_exclusive", "gpu_unload_timeout", "gpu_unload_strict"):
         assert not hasattr(cfg, removed)
@@ -68,6 +71,8 @@ def test_env_overrides_have_correct_types(monkeypatch):
     monkeypatch.setenv("RERANKER_TOP_K", "5")
     monkeypatch.setenv("RERANKER_BATCH_SIZE", "4")
     monkeypatch.setenv("RERANKER_TIMEOUT", "45.5")
+    monkeypatch.setenv("RERANKER_MAX_RETRIES", "2")
+    monkeypatch.setenv("RERANKER_RETRY_MAX_WAIT", "15.5")
     monkeypatch.setenv("RERANKER_APPLY_QWEN3_TEMPLATE", "true")
     cfg = Config("default")
     assert cfg.retrieval_pipeline == "local_gpu"
@@ -78,6 +83,8 @@ def test_env_overrides_have_correct_types(monkeypatch):
     assert cfg.reranker_top_k == 5
     assert cfg.reranker_batch_size == 4
     assert cfg.reranker_timeout == 45.5 and isinstance(cfg.reranker_timeout, float)
+    assert cfg.reranker_max_retries == 2 and isinstance(cfg.reranker_max_retries, int)
+    assert cfg.reranker_retry_max_wait == 15.5 and isinstance(cfg.reranker_retry_max_wait, float)
     assert cfg.reranker_apply_qwen3_template is True
     assert retrieval_pipeline_enabled(cfg) is True
 
@@ -88,6 +95,8 @@ def test_env_overrides_have_correct_types(monkeypatch):
     assert reranker.model == "local/Qwen3-Reranker-4B-INT4"
     assert reranker.batch_size == 4
     assert reranker.timeout == 45.5
+    assert reranker.max_retries == 2
+    assert reranker.retry_max_wait == 15.5
     assert reranker.apply_qwen3_template is True
 
 
