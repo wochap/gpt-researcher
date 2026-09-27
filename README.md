@@ -20,6 +20,12 @@
 
 </div>
 
+> **This fork's changes:**
+> - Report continuation: detect truncated/incomplete LLM completions and auto-continue until a completion marker, instead of silently returning cut-off reports
+> - Report continuation now keeps full prior context on continuation instead of trimming it
+> - Reranker: new context reranker (llama-server compatible) with config options, plus retry logic for transient llama-server errors
+> - Added `firecrawl-py>=4.6.0` dependency
+
 # 🔎 GPT Researcher
 
 **GPT Researcher the first open deep research agent designed for both web and local research on any given task.** 
